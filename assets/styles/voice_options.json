@@ -1,0 +1,31 @@
+{
+  "default_voice": "en-US-ChristopherNeural",
+  "default_rate": "+18%",
+  "default_pitch": "+0Hz",
+  "voices": {
+    "en-US-ChristopherNeural": {
+      "gender": "Male",
+      "style": "Energetic, deep, dramatic narrator",
+      "recommended_rate": "+18%",
+      "recommended_pitch": "+0Hz"
+    },
+    "en-US-GuyNeural": {
+      "gender": "Male",
+      "style": "Fast-talking, hype internet creator",
+      "recommended_rate": "+22%",
+      "recommended_pitch": "+2Hz"
+    },
+    "en-US-BrianNeural": {
+      "gender": "Male",
+      "style": "Classic meme narrative voice",
+      "recommended_rate": "+15%",
+      "recommended_pitch": "+0Hz"
+    },
+    "en-GB-RyanNeural": {
+      "gender": "Male",
+      "style": "British sharp and witty narrator",
+      "recommended_rate": "+20%",
+      "recommended_pitch": "+0Hz"
+    }
+  }
+}

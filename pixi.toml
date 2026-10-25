@@ -1,0 +1,25 @@
+[workspace]
+name = "brainrot-slop-pipeline"
+version = "0.1.0"
+description = "Automated Brainrot Slop Video Generation Pipeline"
+authors = ["seani"]
+channels = ["conda-forge"]
+platforms = ["win-64", "linux-64"]
+
+[dependencies]
+python = ">=3.11,<3.13"
+ffmpeg = ">=6.0"
+ddgs = ">=9.16.0,<10"
+
+[pypi-dependencies]
+duckduckgo-search = ">=6.0.0"
+edge-tts = ">=6.1.12"
+ollama = ">=0.4.0"
+pydantic = ">=2.0.0"
+pillow = ">=10.0.0"
+moviepy = ">=1.0.3,<2.0.0"
+requests = ">=2.31.0"
+
+[tasks]
+generate = "python -m pipeline.main"
+download-assets = "python -m assets.download_assets"

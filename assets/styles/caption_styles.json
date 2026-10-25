@@ -1,0 +1,41 @@
+{
+  "default_preset": "brainrot_viral",
+  "presets": {
+    "brainrot_viral": {
+      "font_name": "Anton.ttf",
+      "font_size": 86,
+      "text_color": "#FFFF00",
+      "stroke_color": "#000000",
+      "stroke_width": 10,
+      "shadow_color": "#000000",
+      "shadow_offset": [6, 6],
+      "max_width_ratio": 0.88,
+      "all_caps": true,
+      "box_padding": 20
+    },
+    "neon_red": {
+      "font_name": "Montserrat-Black.ttf",
+      "font_size": 72,
+      "text_color": "#FF2A2A",
+      "stroke_color": "#FFFFFF",
+      "stroke_width": 6,
+      "shadow_color": "#000000",
+      "shadow_offset": [5, 5],
+      "max_width_ratio": 0.85,
+      "all_caps": true,
+      "box_padding": 20
+    },
+    "clean_impact": {
+      "font_name": "impact.ttf",
+      "font_size": 80,
+      "text_color": "#FFFFFF",
+      "stroke_color": "#000000",
+      "stroke_width": 8,
+      "shadow_color": "#000000",
+      "shadow_offset": [4, 4],
+      "max_width_ratio": 0.85,
+      "all_caps": true,
+      "box_padding": 20
+    }
+  }
+}
