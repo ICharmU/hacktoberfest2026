@@ -4,38 +4,47 @@
     "brainrot_viral": {
       "font_name": "Anton.ttf",
       "font_size": 86,
-      "text_color": "#FFFF00",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFFF00",
       "stroke_color": "#000000",
       "stroke_width": 10,
       "shadow_color": "#000000",
       "shadow_offset": [6, 6],
       "max_width_ratio": 0.88,
       "all_caps": true,
-      "box_padding": 20
+      "box_padding": 20,
+      "split_comma_threshold": 6,
+      "max_words_per_line": 4
     },
     "neon_red": {
       "font_name": "Montserrat-Black.ttf",
       "font_size": 72,
-      "text_color": "#FF2A2A",
-      "stroke_color": "#FFFFFF",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FF2A2A",
+      "stroke_color": "#000000",
       "stroke_width": 6,
       "shadow_color": "#000000",
       "shadow_offset": [5, 5],
       "max_width_ratio": 0.85,
       "all_caps": true,
-      "box_padding": 20
+      "box_padding": 20,
+      "split_comma_threshold": 6,
+      "max_words_per_line": 4
     },
     "clean_impact": {
       "font_name": "impact.ttf",
       "font_size": 80,
       "text_color": "#FFFFFF",
+      "highlight_color": "#00FFFF",
       "stroke_color": "#000000",
       "stroke_width": 8,
       "shadow_color": "#000000",
       "shadow_offset": [4, 4],
       "max_width_ratio": 0.85,
       "all_caps": true,
-      "box_padding": 20
+      "box_padding": 20,
+      "split_comma_threshold": 6,
+      "max_words_per_line": 4
     }
   }
 }

@@ -2,7 +2,7 @@
 Video Compositor:
 Assembles vertical video (1080x1920) with:
 1. Subway Surfers sliced background
-2. Central foreground topic image with border
+2. Central foreground topic image (borderless)
 3. Flashing pointing arrows (off for 0.1s every 0.5s)
 4. Stylized auto-wrapped subtitles (proper line breaks, no literal '\\n')
 5. Edge-TTS narration audio
@@ -92,34 +92,24 @@ class VideoCompositor:
             
         return canvas
 
-    def _create_bordered_card(self, image_path: Path, max_w: int = 860, max_h: int = 620) -> Image.Image:
+    def _create_image_card(self, image_path: Path, max_w: int = 860, max_h: int = 620) -> Image.Image:
         """
-        Loads the foreground image, fits inside max dimensions, and adds a thick high-visibility border.
+        Loads the foreground image and fits inside max dimensions without synthetic borders.
         """
         if not image_path.exists():
             # Blank transparent card
             return Image.new("RGBA", (max_w, max_h), (0, 0, 0, 0))
             
         with Image.open(image_path) as img:
-            img = img.convert("RGBA")
-            img.thumbnail((max_w - 24, max_h - 24), Image.Resampling.LANCZOS)
-            iw, ih = img.size
-            
-            # Canvas with border
-            border_pad = 12
-            cw = iw + border_pad * 2
-            ch = ih + border_pad * 2
-            
-            card = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
-            draw = ImageDraw.Draw(card)
-            
-            # Glowing double border (Black outer, Neon Yellow inner)
-            draw.rectangle([0, 0, cw, ch], fill=(0, 0, 0, 255))
-            draw.rectangle([4, 4, cw - 4, ch - 4], fill=(255, 215, 0, 255))
-            draw.rectangle([10, 10, cw - 10, ch - 10], fill=(0, 0, 0, 255))
-            
-            card.paste(img, (border_pad, border_pad), img)
+            card = img.convert("RGBA")
+            card.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
             return card
+
+    def _create_bordered_card(self, image_path: Path, max_w: int = 860, max_h: int = 620) -> Image.Image:
+        """
+        Backward-compatible alias for _create_image_card (borders removed).
+        """
+        return self._create_image_card(image_path, max_w=max_w, max_h=max_h)
 
     def _render_caption_image(self, lines: List[str]) -> Image.Image:
         """

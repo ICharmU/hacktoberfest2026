@@ -35,7 +35,8 @@ from pipeline.config import (
 )
 from assets.download_assets import ensure_fonts
 from pipeline.researcher.date_researcher import DateResearcher
-from pipeline.writer.script_writer import ScriptWriter
+from pipeline.writer.script_writer import ScriptWriter, ScriptResult
+from pipeline.harness import IdeationHarness
 from pipeline.tts.voice_actor import VoiceActor
 from pipeline.assets.image_fetcher import ImageFetcher
 from pipeline.assets.gameplay_manager import GameplayManager
@@ -45,9 +46,12 @@ from pipeline.compositor.renderer import VideoCompositor
 def run_pipeline(
     topic: str,
     model: str = DEFAULT_MODEL,
+    worker_model: str = "gemma4:e2b",
+    num_workers: int = 5,
     voice: str = DEFAULT_VOICE,
     rate: str = DEFAULT_RATE,
-    pitch: str = DEFAULT_PITCH
+    pitch: str = DEFAULT_PITCH,
+    legacy: bool = False
 ) -> Path:
     init_observability()
     print("=" * 60)
@@ -65,26 +69,41 @@ def run_pipeline(
     temp_dir.mkdir(parents=True, exist_ok=True)
     print(f"[pipeline] Output directory: {run_dir}")
 
-    # 3. Researcher Agent
-    researcher = DateResearcher(max_results=8)
-    research_result = researcher.research(topic)
+    # 3. Ideation: Harness vs Legacy
+    harness_output = None
+    if not legacy:
+        harness = IdeationHarness(
+            worker_model=worker_model,
+            director_model=model,
+            num_workers=num_workers
+        )
+        harness_output = harness.run(topic)
+        script_result = ScriptResult(
+            title=harness_output.title,
+            description=harness_output.description,
+            tags=harness_output.tags,
+            beats=harness_output.beats,
+            full_script=harness_output.full_script
+        )
+    else:
+        print("[pipeline] Running in legacy single-agent research mode...", flush=True)
+        researcher = DateResearcher(max_results=8)
+        research_result = researcher.research(topic)
+        writer = ScriptWriter(model=model)
+        script_result = writer.write_script(research_result)
 
-    # 4. Script Writer Agent (Ollama gemma4:12b)
-    writer = ScriptWriter(model=model)
-    script_result = writer.write_script(research_result)
-    print(f"\n[pipeline] Generated Script Title: {script_result.title}")
+    print(f"\n[pipeline] Final Video Title: {script_result.title}")
     print(f"[pipeline] Number of beats: {len(script_result.beats)}")
     for idx, beat in enumerate(script_result.beats, 1):
         print(f"  Beat {idx}: {beat.text}")
-        print(f"    Captions: {beat.caption_lines}")
         print(f"    Image query: {beat.image_search_query}")
 
-    # 5. Voice Actor (edge-tts)
+    # 4. Voice Actor (edge-tts)
     tts_audio_path = temp_dir / "narration.mp3"
     voice_actor = VoiceActor(voice=voice, rate=rate, pitch=pitch)
     voice_result = voice_actor.synthesize(script_result, tts_audio_path)
 
-    # 6. Asset Sourcing: Images for each beat
+    # 5. Asset Sourcing: Images for each beat
     image_fetcher = ImageFetcher()
     beat_images = []
     for i, beat in enumerate(voice_result.beat_timings):
@@ -92,11 +111,11 @@ def run_pipeline(
         image_fetcher.fetch_image(beat.image_query, img_path)
         beat_images.append(img_path)
 
-    # 7. Asset Sourcing: Subway Surfers Gameplay background
+    # 6. Asset Sourcing: Subway Surfers Gameplay background
     gameplay_mgr = GameplayManager(DEFAULT_GAMEPLAY_VIDEO)
     sliced_gameplay = gameplay_mgr.get_sliced_clip(voice_result.duration_seconds)
 
-    # 8. Video Compositor (Flashing arrows, vertical layout, bold subtitles)
+    # 7. Video Compositor (Flashing arrows, vertical layout, bold subtitles)
     final_video_path = run_dir / "video.mp4"
     compositor = VideoCompositor(font_path=DEFAULT_FONT_FILE)
     compositor.compose(
@@ -106,7 +125,7 @@ def run_pipeline(
         output_video_path=final_video_path
     )
 
-    # 9. Packaging Metadata JSON
+    # 8. Packaging Metadata JSON
     metadata = {
         "title": script_result.title,
         "description": script_result.description,
@@ -115,7 +134,8 @@ def run_pipeline(
         "created_at": datetime.datetime.now().isoformat(),
         "duration_seconds": round(voice_result.duration_seconds, 2),
         "voice": voice,
-        "model": model,
+        "director_model": model,
+        "worker_model": worker_model if not legacy else None,
         "beats": [
             {
                 "index": b.beat_index,
@@ -129,6 +149,14 @@ def run_pipeline(
         ],
         "video_file": "video.mp4"
     }
+
+    if harness_output:
+        metadata["selected_archetype"] = harness_output.selected_archetype
+        metadata["archetype_justification"] = harness_output.archetype_justification
+        metadata["hook"] = harness_output.hook.model_dump()
+        metadata["outline"] = harness_output.outline.model_dump()
+        metadata["consensus_facts"] = harness_output.consensus_facts
+        metadata["harness_stats"] = harness_output.metadata
 
     metadata_path = run_dir / "metadata.json"
     with open(metadata_path, "w", encoding="utf-8") as f:
@@ -144,22 +172,28 @@ def run_pipeline(
     return run_dir
 
 def main():
-    parser = argparse.ArgumentParser(description="Automated Brainrot Slop Video Generator")
-    parser.add_argument("--topic", type=str, default="October 25, 2026", help="Target topic or historical date")
+    parser = argparse.ArgumentParser(description="Automated Brainrot Slop Video Generator with Consensus Ideation Harness")
+    parser.add_argument("--topic", type=str, default="October 25, 2026", help="Target topic, historical date, URL, or local file")
     parser.add_argument("--date", type=str, default=None, help="Alias for --topic")
-    parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help="Ollama model name (default: gemma4:12b)")
+    parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help="Lead Director Ollama model (default: gemma4:12b)")
+    parser.add_argument("--worker-model", type=str, default="gemma4:e2b", help="Worker Ollama model (default: gemma4:e2b)")
+    parser.add_argument("--workers", type=int, default=5, help="Number of worker subagents to dispatch (default: 5)")
     parser.add_argument("--voice", type=str, default=DEFAULT_VOICE, help="edge-tts voice identifier")
     parser.add_argument("--rate", type=str, default=DEFAULT_RATE, help="Speech rate adjustment (e.g. +18%%)")
     parser.add_argument("--pitch", type=str, default=DEFAULT_PITCH, help="Speech pitch adjustment")
+    parser.add_argument("--legacy", action="store_true", help="Use legacy single-agent researcher instead of consensus harness")
 
     args = parser.parse_args()
     target_topic = args.date if args.date else args.topic
     run_pipeline(
         topic=target_topic,
         model=args.model,
+        worker_model=args.worker_model,
+        num_workers=args.workers,
         voice=args.voice,
         rate=args.rate,
-        pitch=args.pitch
+        pitch=args.pitch,
+        legacy=args.legacy
     )
 
 if __name__ == "__main__":
