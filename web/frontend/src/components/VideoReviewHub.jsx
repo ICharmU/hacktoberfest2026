@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Download, Copy, Check, Film, Clock, Tag, ListOrdered, Share2 } from 'lucide-react';
+import { Download, Copy, Check, Film, Clock, Tag, ListOrdered, Share2, Youtube, ExternalLink } from 'lucide-react';
 
-export default function VideoReviewHub({ video, isLoadingDetails }) {
+export default function VideoReviewHub({ video, isLoadingDetails, onOpenYouTubeUpload }) {
   const [copiedKey, setCopiedKey] = useState(null);
 
   const copyToClipboard = (text, key) => {
@@ -57,14 +57,37 @@ export default function VideoReviewHub({ video, isLoadingDetails }) {
           </span>
         </div>
 
-        <a
-          href={video.download_url || `/api/videos/${video.id}/download`}
-          download
-          className="btn btn-secondary"
-          style={{ textDecoration: 'none' }}
-        >
-          <Download size={14} /> Download MP4
-        </a>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {meta.youtube_shorts_url ? (
+            <a
+              href={meta.youtube_shorts_url}
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn-secondary"
+              style={{ color: '#ef4444', textDecoration: 'none', borderColor: '#ef4444' }}
+            >
+              <Youtube size={14} /> View Shorts
+            </a>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ background: '#ef4444', borderColor: '#ef4444' }}
+              onClick={onOpenYouTubeUpload}
+            >
+              <Youtube size={15} /> Upload to YouTube
+            </button>
+          )}
+
+          <a
+            href={video.download_url || `/api/videos/${video.id}/download`}
+            download
+            className="btn btn-secondary"
+            style={{ textDecoration: 'none' }}
+          >
+            <Download size={14} /> Download MP4
+          </a>
+        </div>
       </div>
 
       <div className="publication-hub">

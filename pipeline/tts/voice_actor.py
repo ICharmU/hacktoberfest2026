@@ -9,8 +9,9 @@ from typing import List
 from pydantic import BaseModel, Field
 import edge_tts
 
-from pipeline.config import DEFAULT_VOICE, DEFAULT_RATE, DEFAULT_PITCH
+from pipeline.config import DEFAULT_VOICE, DEFAULT_RATE, DEFAULT_PITCH, DEFAULT_FONT_FILE, load_caption_style
 from pipeline.writer.script_writer import ScriptResult
+from PIL import ImageFont
 
 class WordTiming(BaseModel):
     word: str
@@ -42,17 +43,173 @@ class VoiceResult(BaseModel):
     caption_cues: List[CaptionCue] = Field(default_factory=list)
     beat_timings: List[BeatTiming] = Field(default_factory=list)
 
+def get_caption_font() -> ImageFont.ImageFont:
+    """Loads the viral caption font at the styled font size."""
+    style = load_caption_style("brainrot_viral")
+    font_size = style.get("font_size", 86)
+    try:
+        return ImageFont.truetype(str(DEFAULT_FONT_FILE), font_size)
+    except Exception:
+        return ImageFont.load_default()
+
+def measure_line_width(words: List[str], font: ImageFont.ImageFont = None) -> float:
+    """Measures exact pixel width of a list of words rendered with the specified font."""
+    if not words:
+        return 0.0
+    text = " ".join(words).upper()
+    if font and hasattr(font, "getlength"):
+        return font.getlength(text)
+    return len(text) * 40.0
+
+def balance_words_into_lines(
+    words: List[str],
+    font: ImageFont.ImageFont = None,
+    max_lines: int = 3,
+    max_width: float = 800.0
+) -> List[List[str]]:
+    """
+    Partitions words into 1, 2, or at most max_lines (default 3) lines such that:
+    1. Every line width is <= max_width (measured with actual font character metrics).
+    2. The line widths are balanced to be as equal as possible across lines.
+    3. Prefers 2 lines over 3 lines whenever 2 lines fit under max_width.
+    """
+    n = len(words)
+    if n == 0:
+        return []
+    if n == 1:
+        return [[words[0]]]
+
+    # Try 1 line if short
+    w_all = measure_line_width(words, font)
+    if w_all <= max_width and n <= 4:
+        return [words]
+
+    best_partition = None
+    best_score = float('inf')
+
+    if w_all <= max_width:
+        best_partition = [words]
+        best_score = w_all * 0.1
+
+    # Try 2 lines
+    for i in range(1, n):
+        l1 = words[:i]
+        l2 = words[i:]
+        w1 = measure_line_width(l1, font)
+        w2 = measure_line_width(l2, font)
+        if w1 <= max_width and w2 <= max_width:
+            diff = abs(w1 - w2)
+            orphan_penalty = 200.0 if (len(l1) == 1 or len(l2) == 1) else 0.0
+            score = diff + orphan_penalty
+            if score < best_score:
+                best_score = score
+                best_partition = [l1, l2]
+
+    # Try 3 lines if max_lines >= 3 and 2 lines couldn't fit
+    if max_lines >= 3 and best_partition is None:
+        for i in range(1, n - 1):
+            for j in range(i + 1, n):
+                l1 = words[:i]
+                l2 = words[i:j]
+                l3 = words[j:]
+                w1 = measure_line_width(l1, font)
+                w2 = measure_line_width(l2, font)
+                w3 = measure_line_width(l3, font)
+                if w1 <= max_width and w2 <= max_width and w3 <= max_width:
+                    diff = max(w1, w2, w3) - min(w1, w2, w3)
+                    orphan_penalty = 300.0 if (len(l1) == 1 or len(l2) == 1 or len(l3) == 1) else 0.0
+                    score = diff + orphan_penalty
+                    if score < best_score:
+                        best_score = score
+                        best_partition = [l1, l2, l3]
+
+    if best_partition:
+        return best_partition
+
+    # Fallback greedy wrapping
+    lines = []
+    cur_line = []
+    for w in words:
+        test_line = cur_line + [w]
+        if measure_line_width(test_line, font) <= max_width:
+            cur_line = test_line
+        else:
+            if cur_line:
+                lines.append(cur_line)
+            cur_line = [w]
+    if cur_line:
+        lines.append(cur_line)
+    return lines[:max_lines]
+
+def paginate_word_timings(
+    word_timings: List[WordTiming],
+    font: ImageFont.ImageFont = None,
+    min_words_per_page: int = 4,
+    max_words_per_page: int = 9,
+    max_lines: int = 3,
+    max_width: float = 800.0
+) -> List[List[List[WordTiming]]]:
+    """
+    Paginates a sequence of WordTiming objects into multi-line pages:
+    - Each page has between min_words_per_page (e.g. 4) and max_words_per_page words.
+    - Each page has at most max_lines (3 lines maximum).
+    - Calculates character width before placing each line (<= max_width).
+    - Advances to the next page when full even if mid-sentence.
+    - Balances width across lines so text does not spill outside borders.
+    Returns: List of pages, where each page is a List of lines, and each line is a List of WordTiming.
+    """
+    pages = []
+    idx = 0
+    total = len(word_timings)
+    
+    while idx < total:
+        remaining = total - idx
+        best_count = min(min_words_per_page, remaining)
+        
+        for count in range(best_count, min(max_words_per_page + 1, remaining + 1)):
+            cand_words = [wt.word for wt in word_timings[idx : idx + count]]
+            lines = balance_words_into_lines(cand_words, font=font, max_lines=max_lines, max_width=max_width)
+            if len(lines) <= max_lines and all(measure_line_width(l, font) <= max_width for l in lines):
+                best_count = count
+            else:
+                break
+                
+        # Remnant handling: avoid leaving an orphan with < min_words_per_page
+        rem_after = remaining - best_count
+        if 0 < rem_after < min_words_per_page:
+            cand_all = [wt.word for wt in word_timings[idx : idx + best_count + rem_after]]
+            lines_all = balance_words_into_lines(cand_all, font=font, max_lines=max_lines, max_width=max_width)
+            if len(lines_all) <= max_lines and all(measure_line_width(l, font) <= max_width for l in lines_all):
+                best_count += rem_after
+            else:
+                half = (best_count + rem_after) // 2
+                best_count = max(min_words_per_page, half)
+
+        # Slice the WordTiming objects for this page
+        page_wt = word_timings[idx : idx + best_count]
+        page_words_str = [wt.word for wt in page_wt]
+        page_str_lines = balance_words_into_lines(page_words_str, font=font, max_lines=max_lines, max_width=max_width)
+        
+        # Map WordTiming objects to the balanced lines
+        page_lines_wt = []
+        wt_cursor = 0
+        for str_line in page_str_lines:
+            line_wt = page_wt[wt_cursor : wt_cursor + len(str_line)]
+            page_lines_wt.append(line_wt)
+            wt_cursor += len(str_line)
+            
+        pages.append(page_lines_wt)
+        idx += best_count
+        
+    return pages
+
 def segment_text_into_clauses(text: str, split_comma_threshold: int = 6) -> List[str]:
     """
-    Splits text into cohesive sentences or comma-delimited clauses if long.
-    - Full sentences are kept together on screen if <= split_comma_threshold words.
-    - Sentences longer than split_comma_threshold with commas/semicolons are split at commas.
-    - Small orphan clauses (< 3 words) are merged with adjacent clauses.
+    Legacy helper: Splits text into cohesive sentences or comma-delimited clauses.
     """
     sentence_delimiters = r'(?<=[.!?])\s+'
     raw_sentences = [s.strip() for s in re.split(sentence_delimiters, text) if s.strip()]
     clauses = []
-    
     for sent in raw_sentences:
         words = sent.split()
         if len(words) <= split_comma_threshold or (',' not in sent and ';' not in sent and '—' not in sent):
@@ -71,7 +228,6 @@ def segment_text_into_clauses(text: str, split_comma_threshold: int = 6) -> List
                     cur = p
             if cur:
                 merged_parts.append(cur)
-            # Preserve sentence ending punctuation if stripped by splitting
             if sent.endswith(('.', '!', '?')) and not merged_parts[-1].endswith(('.', '!', '?')):
                 merged_parts[-1] += sent[-1]
             clauses.extend(merged_parts)
@@ -79,14 +235,9 @@ def segment_text_into_clauses(text: str, split_comma_threshold: int = 6) -> List
 
 def wrap_clause_lines(words: List[str], max_words_per_line: int = 4) -> List[List[str]]:
     """
-    Wraps a list of words into lines with at most max_words_per_line.
+    Wraps a list of words into balanced lines using font width metrics when available.
     """
-    if not words:
-        return []
-    lines = []
-    for i in range(0, len(words), max_words_per_line):
-        lines.append(words[i : i + max_words_per_line])
-    return lines
+    return balance_words_into_lines(words, max_lines=3, max_width=800.0)
 
 from pipeline.observability import observe
 
@@ -178,57 +329,51 @@ class VoiceActor:
                     end_seconds=en
                 ))
 
-        # Segment full script into cohesive sentences / comma-split clauses
-        clauses = segment_text_into_clauses(full_text)
+        # Paginate word timings into 1-3 line balanced pages (max 3 lines, <= 800px per line)
+        font = get_caption_font()
+        pages = paginate_word_timings(
+            normalized_words,
+            font=font,
+            min_words_per_page=4,
+            max_words_per_page=9,
+            max_lines=3,
+            max_width=800.0
+        )
         caption_cues: List[CaptionCue] = []
-        word_cursor = 0
 
-        for clause_idx, clause in enumerate(clauses):
-            clause_words = clause.split()
-            if not clause_words:
-                continue
+        for page_idx, page_lines in enumerate(pages):
+            page_words = [wt for line in page_lines for wt in line]
+            clause_lines = [" ".join([wt.word for wt in line]).upper() for line in page_lines]
+            page_text = " ".join([wt.word for wt in page_words]).upper()
 
-            num_words = len(clause_words)
-            if clause_idx == len(clauses) - 1:
-                matched_words = normalized_words[word_cursor:]
-            else:
-                matched_words = normalized_words[word_cursor : word_cursor + num_words]
-            word_cursor += len(matched_words)
+            for line_idx, line_words in enumerate(page_lines):
+                for word_idx_on_line, wt in enumerate(line_words):
+                    w_start = wt.start_seconds
+                    w_end = wt.end_seconds
 
-            if not matched_words:
-                continue
+                    # Extend end_seconds to next word's start to ensure smooth non-flickering highlight
+                    word_pos_in_page = sum(len(page_lines[l]) for l in range(line_idx)) + word_idx_on_line
+                    if word_pos_in_page < len(page_words) - 1:
+                        next_start = page_words[word_pos_in_page + 1].start_seconds
+                        if next_start > w_start:
+                            w_end = next_start
+                    elif page_idx < len(pages) - 1 and len(pages[page_idx + 1]) > 0 and len(pages[page_idx + 1][0]) > 0:
+                        next_page_first_start = pages[page_idx + 1][0][0].start_seconds
+                        if next_page_first_start > w_start:
+                            w_end = next_page_first_start
+                    else:
+                        w_end = min(total_duration, max(w_end + 0.2, w_start + 0.3))
 
-            line_word_groups = wrap_clause_lines(clause_words, max_words_per_line=4)
-            clause_lines = [" ".join(grp).upper() for grp in line_word_groups]
-
-            for w_idx in range(len(clause_words)):
-                if w_idx < len(matched_words):
-                    w_start = matched_words[w_idx].start_seconds
-                    w_end = matched_words[w_idx].end_seconds
-                else:
-                    w_start = matched_words[-1].start_seconds
-                    w_end = matched_words[-1].end_seconds
-
-                if w_idx < len(clause_words) - 1 and (w_idx + 1) < len(matched_words):
-                    next_start = matched_words[w_idx + 1].start_seconds
-                    if next_start > w_start:
-                        w_end = next_start
-                elif w_idx == len(clause_words) - 1:
-                    w_end = min(total_duration, max(w_end + 0.2, w_start + 0.3))
-
-                line_idx = min(len(line_word_groups) - 1, w_idx // 4)
-                word_idx_on_line = w_idx % 4
-
-                caption_cues.append(CaptionCue(
-                    text=clause_words[w_idx].upper(),
-                    start_seconds=w_start,
-                    end_seconds=w_end,
-                    segment_text=clause.upper(),
-                    lines=clause_lines,
-                    active_line_index=line_idx,
-                    active_word_index=word_idx_on_line,
-                    active_word=clause_words[w_idx].upper()
-                ))
+                    caption_cues.append(CaptionCue(
+                        text=wt.word.upper(),
+                        start_seconds=w_start,
+                        end_seconds=w_end,
+                        segment_text=page_text,
+                        lines=clause_lines,
+                        active_line_index=line_idx,
+                        active_word_index=word_idx_on_line,
+                        active_word=wt.word.upper()
+                    ))
 
         # Segment total duration across the script beats for image display
         beat_timings: List[BeatTiming] = []

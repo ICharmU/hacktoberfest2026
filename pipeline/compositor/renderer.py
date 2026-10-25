@@ -190,27 +190,43 @@ class VideoCompositor:
         if not clean_lines:
             return img
 
-        # Measure words and lines
-        space_bbox = draw.textbbox((0, 0), " ", font=font)
-        space_w = space_bbox[2] - space_bbox[0]
-        
+        # Dynamic safeguard: measure and auto-scale font if any line exceeds 820px safe width
+        max_allowed_w = 820
         line_spacing = 16
         stroke_w = self.style.get("stroke_width", 8)
         stroke_col = self.style.get("stroke_color", "#000000")
         base_text_col = self.style.get("text_color", "#FFFFFF")
         highlight_col = self.style.get("highlight_color", "#FFFF00")
 
-        parsed_lines = []
-        total_h = 0
-        for l in clean_lines:
-            words = l.split()
-            word_boxes = [draw.textbbox((0, 0), w, font=font) for w in words]
-            word_widths = [b[2] - b[0] for b in word_boxes]
-            lh = max([b[3] - b[1] for b in word_boxes], default=font.size if hasattr(font, 'size') else 60)
-            lw = sum(word_widths) + max(0, len(words) - 1) * space_w
-            parsed_lines.append((words, word_widths, lw, lh))
-            total_h += lh + line_spacing
-        total_h -= line_spacing
+        # Iterate to fit within max_allowed_w if needed
+        for _ in range(3):
+            space_bbox = draw.textbbox((0, 0), " ", font=font)
+            space_w = space_bbox[2] - space_bbox[0]
+            parsed_lines = []
+            total_h = 0
+            max_lw = 0
+            for l in clean_lines:
+                words = l.split()
+                word_boxes = [draw.textbbox((0, 0), w, font=font) for w in words]
+                word_widths = [b[2] - b[0] for b in word_boxes]
+                lh = max([b[3] - b[1] for b in word_boxes], default=font.size if hasattr(font, 'size') else 60)
+                lw = sum(word_widths) + max(0, len(words) - 1) * space_w
+                if lw > max_lw:
+                    max_lw = lw
+                parsed_lines.append((words, word_widths, lw, lh))
+                total_h += lh + line_spacing
+            total_h -= line_spacing
+
+            if max_lw > max_allowed_w and hasattr(font, "size") and font.size > 40:
+                scale = max_allowed_w / max_lw
+                new_size = max(40, int(font.size * scale))
+                if new_size < font.size:
+                    try:
+                        font = ImageFont.truetype(str(self.font_path), new_size)
+                        continue
+                    except Exception:
+                        break
+            break
 
         start_y = max(20, (canvas_h - total_h) // 2)
         curr_y = start_y

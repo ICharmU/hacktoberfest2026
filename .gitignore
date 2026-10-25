@@ -13,6 +13,10 @@ node_modules/
 web/frontend/dist/
 .vite/
 
+# YouTube OAuth
+.youtube_credentials.json
+client_secrets.json
+
 # C extensions
 *.so
 

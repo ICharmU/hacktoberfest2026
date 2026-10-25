@@ -77,5 +77,18 @@ class TestWebBackend(unittest.TestCase):
         self.assertIn("html", response.headers.get("content-type", ""))
         self.assertIn("root", response.text)
 
+    def test_youtube_status(self):
+        response = self.client.get("/api/youtube/status")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("connected", data)
+        self.assertIn("configured", data)
+
+    def test_youtube_disconnect(self):
+        response = self.client.post("/api/youtube/disconnect")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["status"], "disconnected")
+
 if __name__ == "__main__":
     unittest.main()

@@ -21,7 +21,7 @@ from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv, set_key
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -86,6 +86,8 @@ async def startup_event():
 # Models
 # ============================================================================
 
+from web.backend.youtube_manager import YouTubeManager
+
 class GenerateRequest(BaseModel):
     topic: str
     model: str = DEFAULT_MODEL
@@ -102,6 +104,15 @@ class SettingsUpdateRequest(BaseModel):
     langfuse_host: Optional[str] = None
     ollama_host: Optional[str] = None
     default_model: Optional[str] = None
+    youtube_client_id: Optional[str] = None
+    youtube_client_secret: Optional[str] = None
+
+class YouTubeUploadRequest(BaseModel):
+    title: str
+    description: str
+    tags: Optional[List[str]] = None
+    privacy_status: str = "unlisted"
+    made_for_kids: bool = False
 
 
 # ============================================================================
@@ -411,6 +422,8 @@ async def get_settings():
 
     tracking = is_tracking_enabled()
 
+    yt_status = YouTubeManager.get_channel_status()
+
     return {
         "langfuse_public_key": pub_key,
         "langfuse_secret_key_masked": mask_key(sec_key),
@@ -419,7 +432,11 @@ async def get_settings():
         "ollama_host": ollama_host,
         "is_langfuse_enabled": tracking,
         "default_model": DEFAULT_MODEL,
-        "default_voice": DEFAULT_VOICE
+        "default_voice": DEFAULT_VOICE,
+        "youtube_client_id": os.getenv("YOUTUBE_CLIENT_ID", ""),
+        "youtube_client_secret_masked": mask_key(os.getenv("YOUTUBE_CLIENT_SECRET", "")),
+        "has_youtube_secret": bool(os.getenv("YOUTUBE_CLIENT_SECRET")),
+        "youtube_status": yt_status
     }
 
 
@@ -448,6 +465,10 @@ async def update_settings(req: SettingsUpdateRequest):
         updates["LANGFUSE_BASE_URL"] = host_val
     if req.ollama_host is not None:
         updates["OLLAMA_HOST"] = req.ollama_host.strip()
+    if req.youtube_client_id is not None:
+        updates["YOUTUBE_CLIENT_ID"] = req.youtube_client_id.strip()
+    if req.youtube_client_secret is not None and req.youtube_client_secret.strip():
+        updates["YOUTUBE_CLIENT_SECRET"] = req.youtube_client_secret.strip()
 
     for env_target in target_envs:
         for k, v in updates.items():
@@ -465,8 +486,88 @@ async def update_settings(req: SettingsUpdateRequest):
     return {
         "status": "updated",
         "is_langfuse_enabled": is_tracking_enabled(),
-        "langfuse_host": os.getenv("LANGFUSE_HOST") or os.getenv("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com"
+        "langfuse_host": os.getenv("LANGFUSE_HOST") or os.getenv("LANGFUSE_BASE_URL") or "https://cloud.langfuse.com",
+        "youtube_status": YouTubeManager.get_channel_status()
     }
+
+
+# ============================================================================
+# YouTube Integration & Direct Upload
+# ============================================================================
+
+@app.get("/api/youtube/status")
+async def get_youtube_status():
+    return YouTubeManager.get_channel_status()
+
+
+@app.get("/api/youtube/auth/url")
+async def get_youtube_auth_url(redirect_uri: Optional[str] = None):
+    if not redirect_uri:
+        redirect_uri = "http://localhost:8000/api/youtube/auth/callback"
+    try:
+        return YouTubeManager.get_auth_url(redirect_uri=redirect_uri)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/youtube/auth/callback")
+async def youtube_auth_callback(code: str, state: Optional[str] = None, request: Request = None):
+    host_header = request.headers.get("host", "localhost:8000") if request else "localhost:8000"
+    redirect_uri = f"http://{host_header}/api/youtube/auth/callback"
+    try:
+        YouTubeManager.exchange_code(code=code, redirect_uri=redirect_uri)
+        return RedirectResponse(url="/?youtube_connected=true")
+    except Exception as e:
+        try:
+            YouTubeManager.exchange_code(code=code, redirect_uri="http://localhost:8000/api/youtube/auth/callback")
+            return RedirectResponse(url="/?youtube_connected=true")
+        except Exception as inner_e:
+            return RedirectResponse(url=f"/?youtube_error={str(inner_e)}")
+
+
+@app.post("/api/youtube/disconnect")
+async def disconnect_youtube():
+    success = YouTubeManager.disconnect()
+    return {"status": "disconnected" if success else "failed"}
+
+
+@app.post("/api/youtube/upload/{video_id}")
+async def upload_to_youtube(video_id: str, req: YouTubeUploadRequest):
+    video_dir = OUTPUTS_DIR / video_id
+    if not video_dir.exists() or not video_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Video directory not found")
+
+    video_path = video_dir / "video.mp4"
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail="Video file not found")
+
+    try:
+        result = YouTubeManager.upload_video(
+            video_path=video_path,
+            title=req.title,
+            description=req.description,
+            tags=req.tags or [],
+            privacy_status=req.privacy_status,
+            made_for_kids=req.made_for_kids
+        )
+
+        metadata_path = video_dir / "metadata.json"
+        if metadata_path.exists():
+            try:
+                with open(metadata_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                meta["youtube_id"] = result["video_id"]
+                meta["youtube_shorts_url"] = result["shorts_url"]
+                meta["youtube_watch_url"] = result["watch_url"]
+                meta["youtube_uploaded_at"] = datetime.datetime.now().isoformat()
+                with open(metadata_path, "w", encoding="utf-8") as f:
+                    json.dump(meta, f, indent=2)
+            except Exception:
+                pass
+
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"YouTube upload failed: {str(e)}")
 
 
 # ============================================================================

@@ -46,6 +46,19 @@ LANGFUSE_HOST="https://cloud.langfuse.com" # or "https://us.cloud.langfuse.com"
 
 *Note: If no keys are provided, the pipeline runs smoothly in local mode with telemetry disabled.*
 
+### 3. YouTube Shorts Direct Upload & OAuth Setup
+You can upload generated videos directly to YouTube Shorts from the web studio console:
+1. In the [Google Cloud Console](https://console.cloud.google.com), create a project and enable the **YouTube Data API v3**.
+2. Create an **OAuth 2.0 Client ID** (Web Application) with the authorized redirect URI:
+   `http://localhost:8000/api/youtube/auth/callback` (or port 5173 for Vite dev).
+3. Add your credentials to `.env` or paste them into the Studio **Settings Modal**:
+   ```env
+   YOUTUBE_CLIENT_ID="xxxx.apps.googleusercontent.com"
+   YOUTUBE_CLIENT_SECRET="GOCSPX-..."
+   ```
+4. Click **Authorize YouTube Account via OAuth** in Settings or click **Upload to YouTube** directly in the Publication Review Hub to sign in with Google.
+5. Once authorized, one-click upload your videos with customizable title, description, tags, and privacy status (`unlisted`, `public`, `private`).
+
 ---
 
 ## Project Structure

@@ -6,7 +6,8 @@ import {
   Film,
   Zap,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Youtube
 } from 'lucide-react';
 
 import SearchableVideoDropdown from './components/SearchableVideoDropdown';
@@ -15,6 +16,7 @@ import ProgressStepper from './components/ProgressStepper';
 import VideoReviewHub from './components/VideoReviewHub';
 import LangfuseDrawer from './components/LangfuseDrawer';
 import SettingsModal from './components/SettingsModal';
+import YouTubeUploadModal from './components/YouTubeUploadModal';
 
 export default function App() {
   const [videos, setVideos] = useState([]);
@@ -23,6 +25,10 @@ export default function App() {
   const [selectedVideoDetails, setSelectedVideoDetails] = useState(null);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
   const [backendError, setBackendError] = useState(false);
+
+  // YouTube State
+  const [youtubeStatus, setYoutubeStatus] = useState(null);
+  const [isYouTubeModalOpen, setIsYouTubeModalOpen] = useState(false);
 
   // Generation & SSE State
   const [isGenerating, setIsGenerating] = useState(false);
@@ -37,10 +43,17 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settings, setSettings] = useState(null);
 
-  // Fetch initial videos and settings
+  // Fetch initial videos, settings, and YouTube status
   useEffect(() => {
     loadVideos();
     loadSettings();
+    loadYouTubeStatus();
+
+    // Check if redirected from YouTube OAuth callback
+    if (window.location.search.includes('youtube_connected=true')) {
+      loadYouTubeStatus();
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
   }, []);
 
   const loadVideos = async () => {
@@ -51,7 +64,6 @@ export default function App() {
         const data = await res.json();
         setVideos(data);
         setBackendError(false);
-        // Select newest video by default if none selected
         if (data.length > 0 && !selectedVideoId) {
           selectVideo(data[0].id);
         }
@@ -73,9 +85,24 @@ export default function App() {
         const data = await res.json();
         setSettings(data);
         setBackendError(false);
+        if (data.youtube_status) {
+          setYoutubeStatus(data.youtube_status);
+        }
       }
     } catch (err) {
       console.error('Failed to load settings:', err);
+    }
+  };
+
+  const loadYouTubeStatus = async () => {
+    try {
+      const res = await fetch('/api/youtube/status');
+      if (res.ok) {
+        const data = await res.json();
+        setYoutubeStatus(data);
+      }
+    } catch (err) {
+      console.error('Failed to load YouTube status:', err);
     }
   };
 
@@ -117,7 +144,6 @@ export default function App() {
       const { job_id, stream_url } = await res.json();
       setLogs((prev) => [...prev, `[system] Job registered (${job_id}). Listening to SSE stream...`]);
 
-      // Connect to SSE stream
       const eventSource = new EventSource(stream_url);
 
       eventSource.onmessage = (e) => {
@@ -138,7 +164,6 @@ export default function App() {
             setLogs((prev) => [...prev, `[system] Video completed: ${event.output_id}`]);
             eventSource.close();
 
-            // Refresh catalog and automatically display newly created video
             loadVideos().then(() => {
               if (event.output_id) {
                 selectVideo(event.output_id);
@@ -157,7 +182,6 @@ export default function App() {
 
       eventSource.onerror = (err) => {
         console.error('EventSource error:', err);
-        // Don't immediately cancel if temporary disconnection
       };
     } catch (err) {
       setIsGenerating(false);
@@ -176,7 +200,10 @@ export default function App() {
       throw new Error('Failed to persist settings');
     }
     await loadSettings();
+    await loadYouTubeStatus();
   };
+
+  const isYtConnected = youtubeStatus?.connected;
 
   return (
     <div className="app-container">
@@ -203,6 +230,19 @@ export default function App() {
 
         {/* Action Controls & Status */}
         <div className="header-actions">
+          {/* YouTube Status Pill */}
+          <div
+            className="status-pill"
+            style={{ cursor: 'pointer' }}
+            title={isYtConnected ? `Connected: ${youtubeStatus?.channel?.title}` : "Connect YouTube Account for Direct Upload"}
+            onClick={() => setIsYouTubeModalOpen(true)}
+          >
+            <Youtube size={14} color="#ef4444" />
+            <span className={`status-dot ${isYtConnected ? '' : 'inactive'}`} />
+            <span>{isYtConnected ? (youtubeStatus?.channel?.title || 'YouTube Connected') : 'YouTube Off'}</span>
+          </div>
+
+          {/* Langfuse Status Pill */}
           <div
             className="status-pill"
             title={settings?.is_langfuse_enabled ? "Langfuse Telemetry Active" : "Langfuse Inactive (Add API keys in Settings)"}
@@ -267,9 +307,20 @@ export default function App() {
           <VideoReviewHub
             video={selectedVideoDetails}
             isLoadingDetails={isLoadingDetails}
+            onOpenYouTubeUpload={() => setIsYouTubeModalOpen(true)}
           />
         </div>
       </main>
+
+      {/* Direct YouTube Upload Modal */}
+      <YouTubeUploadModal
+        isOpen={isYouTubeModalOpen}
+        onClose={() => setIsYouTubeModalOpen(false)}
+        video={selectedVideoDetails}
+        youtubeStatus={youtubeStatus}
+        onRefreshYouTubeStatus={loadYouTubeStatus}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+      />
 
       {/* Slide-out Diagnostics & Langfuse Drawer */}
       <LangfuseDrawer
@@ -286,6 +337,7 @@ export default function App() {
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
         onSaveSettings={handleSaveSettings}
+        onRefreshSettings={loadSettings}
       />
     </div>
   );
