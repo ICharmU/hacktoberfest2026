@@ -23,6 +23,7 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
+from pipeline.observability import observe, init_observability, flush_telemetry
 from pipeline.config import (
     DEFAULT_MODEL,
     DEFAULT_VOICE,
@@ -40,6 +41,7 @@ from pipeline.assets.image_fetcher import ImageFetcher
 from pipeline.assets.gameplay_manager import GameplayManager
 from pipeline.compositor.renderer import VideoCompositor
 
+@observe(name="brainrot_video_pipeline")
 def run_pipeline(
     topic: str,
     model: str = DEFAULT_MODEL,
@@ -47,6 +49,7 @@ def run_pipeline(
     rate: str = DEFAULT_RATE,
     pitch: str = DEFAULT_PITCH
 ) -> Path:
+    init_observability()
     print("=" * 60)
     print(f"Starting Brainrot Slop Pipeline for topic: '{topic}'")
     print("=" * 60)
@@ -137,6 +140,7 @@ def run_pipeline(
     print(f"Metadata:  {metadata_path}")
     print("=" * 60)
 
+    flush_telemetry()
     return run_dir
 
 def main():
@@ -145,7 +149,7 @@ def main():
     parser.add_argument("--date", type=str, default=None, help="Alias for --topic")
     parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help="Ollama model name (default: gemma4:12b)")
     parser.add_argument("--voice", type=str, default=DEFAULT_VOICE, help="edge-tts voice identifier")
-    parser.add_argument("--rate", type=str, default=DEFAULT_RATE, help="Speech rate adjustment (e.g. +18%)")
+    parser.add_argument("--rate", type=str, default=DEFAULT_RATE, help="Speech rate adjustment (e.g. +18%%)")
     parser.add_argument("--pitch", type=str, default=DEFAULT_PITCH, help="Speech pitch adjustment")
 
     args = parser.parse_args()

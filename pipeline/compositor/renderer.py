@@ -19,6 +19,7 @@ from moviepy.editor import (
     ImageClip,
     CompositeVideoClip
 )
+from pipeline.observability import observe
 
 from pipeline.config import (
     VIDEO_WIDTH,
@@ -222,6 +223,7 @@ class VideoCompositor:
         )
         return clip
 
+    @observe(name="video_compositor")
     def compose(
         self,
         gameplay_clip: VideoFileClip,

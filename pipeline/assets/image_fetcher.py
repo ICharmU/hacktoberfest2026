@@ -10,11 +10,13 @@ from typing import List, Optional
 import requests
 from PIL import Image, ImageDraw
 from ddgs import DDGS
+from pipeline.observability import observe
 
 class ImageFetcher:
     def __init__(self, target_size=(880, 640)):
         self.target_size = target_size
 
+    @observe(name="image_fetcher")
     def fetch_image(self, query: str, output_path: Path) -> Path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         print(f"[images] Searching DDGS image for: '{query}'...", flush=True)

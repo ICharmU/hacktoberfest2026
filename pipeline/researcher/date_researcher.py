@@ -5,6 +5,7 @@ Date and Topic researcher utilizing DuckDuckGo Search (DDGS).
 from typing import List
 from ddgs import DDGS
 from .base import BaseResearcher, ResearchResult, FactItem
+from pipeline.observability import observe
 
 class DateResearcher(BaseResearcher):
     """
@@ -13,8 +14,9 @@ class DateResearcher(BaseResearcher):
     def __init__(self, max_results: int = 8):
         self.max_results = max_results
 
+    @observe(name="date_researcher")
     def research(self, query: str) -> ResearchResult:
-        print(f"[researcher] Searching DDGS for: {query}...")
+        print(f"[researcher] Searching DDGS for: {query}...", flush=True)
         
         # Build search queries (both specific date queries and notable event queries)
         queries = [

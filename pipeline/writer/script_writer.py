@@ -75,11 +75,14 @@ Output JSON format:
 }}
 """
 
+from pipeline.observability import observe
+
 class ScriptWriter:
     def __init__(self, model: str = DEFAULT_MODEL, host: str = OLLAMA_HOST):
         self.model = model
         self.client = ollama.Client(host=host)
 
+    @observe(name="script_writer", as_type="generation")
     def write_script(self, research: ResearchResult) -> ScriptResult:
         print(f"[writer] Generating script using Ollama model '{self.model}'...", flush=True)
         

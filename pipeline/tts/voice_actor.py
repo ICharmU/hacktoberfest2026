@@ -36,12 +36,15 @@ class VoiceResult(BaseModel):
     caption_cues: List[CaptionCue] = Field(default_factory=list)
     beat_timings: List[BeatTiming] = Field(default_factory=list)
 
+from pipeline.observability import observe
+
 class VoiceActor:
     def __init__(self, voice: str = DEFAULT_VOICE, rate: str = DEFAULT_RATE, pitch: str = DEFAULT_PITCH):
         self.voice = voice
         self.rate = rate
         self.pitch = pitch
 
+    @observe(name="voice_actor")
     def synthesize(self, script_result: ScriptResult, output_audio_path: Path) -> VoiceResult:
         """
         Synchronously wraps async edge-tts generation.
