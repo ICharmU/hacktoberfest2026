@@ -3,6 +3,7 @@ Voice Actor module utilizing edge-tts for high-energy neural speech and precise 
 """
 
 import asyncio
+import re
 from pathlib import Path
 from typing import List
 from pydantic import BaseModel, Field
@@ -20,6 +21,11 @@ class CaptionCue(BaseModel):
     text: str
     start_seconds: float
     end_seconds: float
+    segment_text: str = ""
+    lines: List[str] = Field(default_factory=list)
+    active_line_index: int = 0
+    active_word_index: int = 0
+    active_word: str = ""
 
 class BeatTiming(BaseModel):
     beat_index: int
@@ -35,6 +41,52 @@ class VoiceResult(BaseModel):
     words: List[WordTiming] = Field(default_factory=list)
     caption_cues: List[CaptionCue] = Field(default_factory=list)
     beat_timings: List[BeatTiming] = Field(default_factory=list)
+
+def segment_text_into_clauses(text: str, split_comma_threshold: int = 6) -> List[str]:
+    """
+    Splits text into cohesive sentences or comma-delimited clauses if long.
+    - Full sentences are kept together on screen if <= split_comma_threshold words.
+    - Sentences longer than split_comma_threshold with commas/semicolons are split at commas.
+    - Small orphan clauses (< 3 words) are merged with adjacent clauses.
+    """
+    sentence_delimiters = r'(?<=[.!?])\s+'
+    raw_sentences = [s.strip() for s in re.split(sentence_delimiters, text) if s.strip()]
+    clauses = []
+    
+    for sent in raw_sentences:
+        words = sent.split()
+        if len(words) <= split_comma_threshold or (',' not in sent and ';' not in sent and '—' not in sent):
+            clauses.append(sent)
+        else:
+            raw_parts = [p.strip() for p in re.split(r'[,;—]\s*', sent) if p.strip()]
+            merged_parts = []
+            cur = ''
+            for p in raw_parts:
+                if not cur:
+                    cur = p
+                elif len(cur.split()) < 3 or (len(cur.split()) + len(p.split())) <= split_comma_threshold:
+                    cur = f"{cur}, {p}"
+                else:
+                    merged_parts.append(cur)
+                    cur = p
+            if cur:
+                merged_parts.append(cur)
+            # Preserve sentence ending punctuation if stripped by splitting
+            if sent.endswith(('.', '!', '?')) and not merged_parts[-1].endswith(('.', '!', '?')):
+                merged_parts[-1] += sent[-1]
+            clauses.extend(merged_parts)
+    return clauses
+
+def wrap_clause_lines(words: List[str], max_words_per_line: int = 4) -> List[List[str]]:
+    """
+    Wraps a list of words into lines with at most max_words_per_line.
+    """
+    if not words:
+        return []
+    lines = []
+    for i in range(0, len(words), max_words_per_line):
+        lines.append(words[i : i + max_words_per_line])
+    return lines
 
 from pipeline.observability import observe
 
@@ -60,21 +112,22 @@ class VoiceActor:
             text=full_text,
             voice=self.voice,
             rate=self.rate,
-            pitch=self.pitch
+            pitch=self.pitch,
+            boundary="WordBoundary"
         )
         
-        sentence_boundaries = []
+        raw_word_boundaries = []
         audio_bytes = bytearray()
         async for chunk in communicate.stream():
             chunk_type = chunk.get("type")
             if chunk_type == "audio":
                 audio_bytes.extend(chunk["data"])
-            elif chunk_type == "SentenceBoundary":
+            elif chunk_type == "WordBoundary":
                 offset_s = chunk["offset"] / 10_000_000.0
                 duration_s = chunk["duration"] / 10_000_000.0
                 text_part = chunk.get("text", "").strip()
                 if text_part:
-                    sentence_boundaries.append((offset_s, duration_s, text_part))
+                    raw_word_boundaries.append((offset_s, duration_s, text_part))
                 
         with open(output_audio_path, "wb") as f:
             f.write(audio_bytes)
@@ -86,55 +139,95 @@ class VoiceActor:
             
         print(f"[tts] True audio duration: {total_duration:.2f}s across {len(script_result.beats)} beats.", flush=True)
 
-        # Generate verbatim rapid-fire caption cues (1-3 words each) for maximum overstimulation
-        caption_cues: List[CaptionCue] = []
-        
-        if sentence_boundaries:
-            for s_start, s_dur, s_text in sentence_boundaries:
-                words = s_text.split()
-                if not words:
-                    continue
-                # Split words into rapid chunks of 1 to 2 words (occasionally 3 if short)
-                word_chunks = []
-                idx = 0
-                while idx < len(words):
-                    take = 2
-                    if idx + 2 >= len(words) and (len(words) - idx) == 3:
-                        take = 3
-                    elif idx + take > len(words):
-                        take = len(words) - idx
-                    word_chunks.append(" ".join(words[idx : idx + take]))
-                    idx += take
-                
-                # Proportional duration for each chunk based on character length
-                total_chars = sum(len(c) for c in word_chunks)
-                chunk_cursor = s_start
-                for c_idx, chunk_str in enumerate(word_chunks):
-                    char_ratio = len(chunk_str) / max(1, total_chars)
-                    chunk_duration = s_dur * char_ratio
-                    c_end = min(total_duration, chunk_cursor + chunk_duration)
-                    if c_idx == len(word_chunks) - 1:
-                        c_end = min(total_duration, s_start + s_dur)
-                    
-                    caption_cues.append(CaptionCue(
-                        text=chunk_str.upper(),
-                        start_seconds=chunk_cursor,
-                        end_seconds=max(chunk_cursor + 0.15, c_end)
+        # Normalize raw word boundaries into individual WordTiming objects
+        normalized_words: List[WordTiming] = []
+        for offset_s, dur_s, text_part in raw_word_boundaries:
+            sub_words = text_part.split()
+            if not sub_words:
+                continue
+            if len(sub_words) == 1:
+                normalized_words.append(WordTiming(
+                    word=sub_words[0],
+                    start_seconds=offset_s,
+                    end_seconds=offset_s + dur_s
+                ))
+            else:
+                total_len = sum(len(w) for w in sub_words)
+                cur_t = offset_s
+                for idx, sw in enumerate(sub_words):
+                    frac = len(sw) / max(1, total_len)
+                    sw_dur = dur_s * frac
+                    end_t = (offset_s + dur_s) if (idx == len(sub_words) - 1) else (cur_t + sw_dur)
+                    normalized_words.append(WordTiming(
+                        word=sw,
+                        start_seconds=cur_t,
+                        end_seconds=end_t
                     ))
-                    chunk_cursor = c_end
-        else:
-            # Fallback if sentence boundaries weren't returned: chunk full script across duration
+                    cur_t = end_t
+
+        # Fallback if WordBoundary wasn't emitted: proportional chunking
+        if not normalized_words:
             all_words = full_text.split()
-            chunk_size = 2
-            word_chunks = [" ".join(all_words[i:i+chunk_size]) for i in range(0, len(all_words), chunk_size)]
-            dur_per_chunk = total_duration / max(1, len(word_chunks))
-            for i, chunk_str in enumerate(word_chunks):
-                st = i * dur_per_chunk
-                en = min(total_duration, (i + 1) * dur_per_chunk)
-                caption_cues.append(CaptionCue(
-                    text=chunk_str.upper(),
+            dur_per_word = total_duration / max(1, len(all_words))
+            for i, sw in enumerate(all_words):
+                st = i * dur_per_word
+                en = min(total_duration, (i + 1) * dur_per_word)
+                normalized_words.append(WordTiming(
+                    word=sw,
                     start_seconds=st,
                     end_seconds=en
+                ))
+
+        # Segment full script into cohesive sentences / comma-split clauses
+        clauses = segment_text_into_clauses(full_text)
+        caption_cues: List[CaptionCue] = []
+        word_cursor = 0
+
+        for clause_idx, clause in enumerate(clauses):
+            clause_words = clause.split()
+            if not clause_words:
+                continue
+
+            num_words = len(clause_words)
+            if clause_idx == len(clauses) - 1:
+                matched_words = normalized_words[word_cursor:]
+            else:
+                matched_words = normalized_words[word_cursor : word_cursor + num_words]
+            word_cursor += len(matched_words)
+
+            if not matched_words:
+                continue
+
+            line_word_groups = wrap_clause_lines(clause_words, max_words_per_line=4)
+            clause_lines = [" ".join(grp).upper() for grp in line_word_groups]
+
+            for w_idx in range(len(clause_words)):
+                if w_idx < len(matched_words):
+                    w_start = matched_words[w_idx].start_seconds
+                    w_end = matched_words[w_idx].end_seconds
+                else:
+                    w_start = matched_words[-1].start_seconds
+                    w_end = matched_words[-1].end_seconds
+
+                if w_idx < len(clause_words) - 1 and (w_idx + 1) < len(matched_words):
+                    next_start = matched_words[w_idx + 1].start_seconds
+                    if next_start > w_start:
+                        w_end = next_start
+                elif w_idx == len(clause_words) - 1:
+                    w_end = min(total_duration, max(w_end + 0.2, w_start + 0.3))
+
+                line_idx = min(len(line_word_groups) - 1, w_idx // 4)
+                word_idx_on_line = w_idx % 4
+
+                caption_cues.append(CaptionCue(
+                    text=clause_words[w_idx].upper(),
+                    start_seconds=w_start,
+                    end_seconds=w_end,
+                    segment_text=clause.upper(),
+                    lines=clause_lines,
+                    active_line_index=line_idx,
+                    active_word_index=word_idx_on_line,
+                    active_word=clause_words[w_idx].upper()
                 ))
 
         # Segment total duration across the script beats for image display
@@ -160,11 +253,11 @@ class VoiceActor:
                 end_seconds=end_t
             ))
             
-        print(f"[tts] Generated {len(caption_cues)} verbatim rapid-fire caption cues.", flush=True)
+        print(f"[tts] Generated {len(caption_cues)} speech-synchronized karaoke caption cues.", flush=True)
         return VoiceResult(
             audio_file=str(output_audio_path),
             duration_seconds=total_duration,
-            words=[],
+            words=normalized_words,
             caption_cues=caption_cues,
             beat_timings=beat_timings
         )

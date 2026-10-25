@@ -8,6 +8,11 @@ __pycache__/
 .env.local
 .env.example
 
+# Node / Frontend
+node_modules/
+web/frontend/dist/
+.vite/
+
 # C extensions
 *.so
 

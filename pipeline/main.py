@@ -11,6 +11,7 @@ import datetime
 import json
 from pathlib import Path
 import sys
+from typing import Callable, Optional, Dict, Any
 
 # Fix MoviePy 1.0.3 compatibility with Pillow 10+
 import PIL.Image
@@ -51,14 +52,24 @@ def run_pipeline(
     voice: str = DEFAULT_VOICE,
     rate: str = DEFAULT_RATE,
     pitch: str = DEFAULT_PITCH,
-    legacy: bool = False
+    legacy: bool = False,
+    progress_callback: Optional[Callable[[str, int, str, Optional[Dict[str, Any]]], None]] = None
 ) -> Path:
+    def _notify(stage: str, percent: int, message: str, data: Optional[Dict[str, Any]] = None):
+        if progress_callback:
+            try:
+                progress_callback(stage, percent, message, data)
+            except Exception:
+                pass
+
+    _notify("init", 5, f"Starting pipeline for '{topic}'...")
     init_observability()
     print("=" * 60)
     print(f"Starting Brainrot Slop Pipeline for topic: '{topic}'")
     print("=" * 60)
 
     # 1. Ensure required fonts/styles are present
+    _notify("setup", 10, "Ensuring fonts and preparing output directory...")
     ensure_fonts()
 
     # 2. Prepare timestamped output folder
@@ -72,6 +83,7 @@ def run_pipeline(
     # 3. Ideation: Harness vs Legacy
     harness_output = None
     if not legacy:
+        _notify("ideation", 20, f"Ideating script using consensus harness ({num_workers} workers)...")
         harness = IdeationHarness(
             worker_model=worker_model,
             director_model=model,
@@ -86,11 +98,18 @@ def run_pipeline(
             full_script=harness_output.full_script
         )
     else:
+        _notify("ideation", 20, "Running in legacy single-agent research mode...")
         print("[pipeline] Running in legacy single-agent research mode...", flush=True)
         researcher = DateResearcher(max_results=8)
         research_result = researcher.research(topic)
         writer = ScriptWriter(model=model)
         script_result = writer.write_script(research_result)
+
+    _notify("script_ready", 40, f"Script ready: '{script_result.title}' ({len(script_result.beats)} beats)", {
+        "title": script_result.title,
+        "beats_count": len(script_result.beats),
+        "tags": script_result.tags
+    })
 
     print(f"\n[pipeline] Final Video Title: {script_result.title}")
     print(f"[pipeline] Number of beats: {len(script_result.beats)}")
@@ -99,23 +118,36 @@ def run_pipeline(
         print(f"    Image query: {beat.image_search_query}")
 
     # 4. Voice Actor (edge-tts)
+    _notify("voice", 45, f"Synthesizing voice audio with {voice}...")
     tts_audio_path = temp_dir / "narration.mp3"
     voice_actor = VoiceActor(voice=voice, rate=rate, pitch=pitch)
     voice_result = voice_actor.synthesize(script_result, tts_audio_path)
+    _notify("voice_ready", 55, f"Narration synthesized ({round(voice_result.duration_seconds, 1)}s)")
 
     # 5. Asset Sourcing: Images for each beat
+    total_beats = len(voice_result.beat_timings)
+    _notify("images", 58, f"Sourcing images for {total_beats} beats...")
     image_fetcher = ImageFetcher()
     beat_images = []
     for i, beat in enumerate(voice_result.beat_timings):
         img_path = temp_dir / f"beat_{i}.png"
-        image_fetcher.fetch_image(beat.image_query, img_path)
+        image_fetcher.fetch_image(
+            query=beat.image_query,
+            output_path=img_path,
+            beat_text=beat.text,
+            topic=topic
+        )
         beat_images.append(img_path)
+        img_pct = 58 + int(18 * (i + 1) / max(1, total_beats))
+        _notify("images", img_pct, f"Fetched beat {i + 1}/{total_beats} image")
 
     # 6. Asset Sourcing: Subway Surfers Gameplay background
+    _notify("gameplay", 78, "Preparing gameplay background clip...")
     gameplay_mgr = GameplayManager(DEFAULT_GAMEPLAY_VIDEO)
     sliced_gameplay = gameplay_mgr.get_sliced_clip(voice_result.duration_seconds)
 
     # 7. Video Compositor (Flashing arrows, vertical layout, bold subtitles)
+    _notify("compositor", 82, "Compositing video and rendering captions...")
     final_video_path = run_dir / "video.mp4"
     compositor = VideoCompositor(font_path=DEFAULT_FONT_FILE)
     compositor.compose(
@@ -126,6 +158,7 @@ def run_pipeline(
     )
 
     # 8. Packaging Metadata JSON
+    _notify("packaging", 95, "Packaging video metadata...")
     metadata = {
         "title": script_result.title,
         "description": script_result.description,
@@ -161,6 +194,13 @@ def run_pipeline(
     metadata_path = run_dir / "metadata.json"
     with open(metadata_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
+
+    _notify("complete", 100, "Pipeline completed successfully!", {
+        "run_dir": str(run_dir),
+        "output_id": timestamp_str,
+        "video_path": str(final_video_path),
+        "metadata": metadata
+    })
 
     print("\n" + "=" * 60)
     print(f"PIPELINE COMPLETED SUCCESSFULLY!")

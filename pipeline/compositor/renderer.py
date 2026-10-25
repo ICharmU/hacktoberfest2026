@@ -2,8 +2,8 @@
 Video Compositor:
 Assembles vertical video (1080x1920) with:
 1. Subway Surfers sliced background
-2. Central foreground topic image (borderless)
-3. Flashing pointing arrows (off for 0.1s every 0.5s)
+2. Central foreground topic image with flickering attention border
+3. Pointing arrows with permanent border and flashing red fill
 4. Stylized auto-wrapped subtitles (proper line breaks, no literal '\\n')
 5. Edge-TTS narration audio
 """
@@ -37,15 +37,18 @@ class VideoCompositor:
         self.font_path = font_path
         self.style = load_caption_style("brainrot_viral")
 
-    def _draw_pointing_arrows(self, card_w: int, card_h: int) -> Image.Image:
+    def _draw_pointing_arrow_layers(self, card_w: int, card_h: int) -> Tuple[Image.Image, Image.Image]:
         """
-        Creates an RGBA image containing high-contrast red/yellow pointing arrows
-        pointing at the left and right borders of the central card.
+        Creates separate layers for pointing arrows:
+        1. border_canvas: Permanent non-flickering black border outline with yellow accent.
+        2. fill_canvas: High-contrast red fill that flickers on/off.
         """
         canvas_w = VIDEO_WIDTH
         canvas_h = card_h + 100
-        canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(canvas)
+        border_canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+        fill_canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+        draw_border = ImageDraw.Draw(border_canvas)
+        draw_fill = ImageDraw.Draw(fill_canvas)
         
         # Center coordinates of the image card on this canvas
         cx = canvas_w // 2
@@ -84,32 +87,163 @@ class VideoCompositor:
             (rx_start, cy + 18)
         ]
 
-        # Black outline / stroke for arrows
         for poly in [left_poly, right_poly]:
-            draw.polygon(poly, fill=(255, 30, 30, 255), outline=(0, 0, 0, 255), width=8)
-            # Add yellow inner accent
-            draw.line([(p[0], p[1]) for p in poly[:4]], fill=(255, 230, 0, 255), width=3)
+            # Fill layer: solid red fill (flickers)
+            draw_fill.polygon(poly, fill=(255, 30, 30, 255))
             
-        return canvas
+            # Border layer: permanent black stroke + yellow accent line (never flickers)
+            draw_border.polygon(poly, fill=None, outline=(0, 0, 0, 255), width=8)
+            draw_border.line([(p[0], p[1]) for p in poly[:4]], fill=(255, 230, 0, 255), width=3)
+            
+        return border_canvas, fill_canvas
+
+    def _draw_pointing_arrows(self, card_w: int, card_h: int) -> Image.Image:
+        """
+        Creates a combined RGBA image of pointing arrows with both fill and border.
+        """
+        border_canvas, fill_canvas = self._draw_pointing_arrow_layers(card_w, card_h)
+        combined = Image.new("RGBA", border_canvas.size, (0, 0, 0, 0))
+        combined.paste(fill_canvas, (0, 0), fill_canvas)
+        combined.paste(border_canvas, (0, 0), border_canvas)
+        return combined
+
+    def _create_image_card_layers(
+        self, image_path: Path, max_w: int = 860, max_h: int = 620, border_pad: int = 12
+    ) -> Tuple[Image.Image, Image.Image]:
+        """
+        Loads the foreground image and returns:
+        (card_img, border_img)
+        - card_img: Permanent, non-flickering image canvas with padding.
+        - border_img: High-visibility glowing double border overlay (Black + Neon Yellow)
+                      designed to flicker over the image to draw attention.
+        """
+        if not image_path.exists():
+            blank = Image.new("RGBA", (max_w, max_h), (0, 0, 0, 0))
+            return blank, blank.copy()
+            
+        with Image.open(image_path) as img:
+            img = img.convert("RGBA")
+            img.thumbnail((max_w - border_pad * 2, max_h - border_pad * 2), Image.Resampling.LANCZOS)
+            iw, ih = img.size
+            
+            cw = iw + border_pad * 2
+            ch = ih + border_pad * 2
+            
+            card_img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+            card_img.paste(img, (border_pad, border_pad), img)
+            
+            border_img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(border_img)
+            # Glowing double border (Black outer, Neon Yellow inner)
+            draw.rectangle([0, 0, cw - 1, ch - 1], outline=(0, 0, 0, 255), width=4)
+            draw.rectangle([4, 4, cw - 5, ch - 5], outline=(255, 215, 0, 255), width=6)
+            draw.rectangle([10, 10, cw - 11, ch - 11], outline=(0, 0, 0, 255), width=2)
+            
+            return card_img, border_img
 
     def _create_image_card(self, image_path: Path, max_w: int = 860, max_h: int = 620) -> Image.Image:
         """
-        Loads the foreground image and fits inside max dimensions without synthetic borders.
+        Loads the foreground image without synthetic borders.
         """
-        if not image_path.exists():
-            # Blank transparent card
-            return Image.new("RGBA", (max_w, max_h), (0, 0, 0, 0))
-            
-        with Image.open(image_path) as img:
-            card = img.convert("RGBA")
-            card.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
-            return card
+        card_img, _ = self._create_image_card_layers(image_path, max_w=max_w, max_h=max_h)
+        return card_img
 
     def _create_bordered_card(self, image_path: Path, max_w: int = 860, max_h: int = 620) -> Image.Image:
         """
-        Backward-compatible alias for _create_image_card (borders removed).
+        Combined bordered card (image + static border).
         """
-        return self._create_image_card(image_path, max_w=max_w, max_h=max_h)
+        card_img, border_img = self._create_image_card_layers(image_path, max_w=max_w, max_h=max_h)
+        combined = Image.new("RGBA", card_img.size, (0, 0, 0, 0))
+        combined.paste(card_img, (0, 0), card_img)
+        combined.paste(border_img, (0, 0), border_img)
+        return combined
+
+    def _render_karaoke_caption_image(
+        self,
+        lines: List[str],
+        active_line_idx: int,
+        active_word_idx: int
+    ) -> Image.Image:
+        """
+        Renders multi-line subtitles with the active spoken word highlighted in high-visibility neon,
+        while maintaining rock-solid identical spatial coordinates for all words in the clause.
+        """
+        canvas_w = VIDEO_WIDTH
+        canvas_h = 360
+        img = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        try:
+            font = ImageFont.truetype(str(self.font_path), self.style.get("font_size", 80))
+        except Exception:
+            font = ImageFont.load_default()
+
+        # Sanitize and uppercase lines
+        clean_lines = []
+        for line in lines:
+            line_str = str(line).replace("\\n", "\n").strip()
+            for sub in line_str.split("\n"):
+                s = sub.strip()
+                if s:
+                    clean_lines.append(s.upper() if self.style.get("all_caps", True) else s)
+
+        if not clean_lines:
+            return img
+
+        # Measure words and lines
+        space_bbox = draw.textbbox((0, 0), " ", font=font)
+        space_w = space_bbox[2] - space_bbox[0]
+        
+        line_spacing = 16
+        stroke_w = self.style.get("stroke_width", 8)
+        stroke_col = self.style.get("stroke_color", "#000000")
+        base_text_col = self.style.get("text_color", "#FFFFFF")
+        highlight_col = self.style.get("highlight_color", "#FFFF00")
+
+        parsed_lines = []
+        total_h = 0
+        for l in clean_lines:
+            words = l.split()
+            word_boxes = [draw.textbbox((0, 0), w, font=font) for w in words]
+            word_widths = [b[2] - b[0] for b in word_boxes]
+            lh = max([b[3] - b[1] for b in word_boxes], default=font.size if hasattr(font, 'size') else 60)
+            lw = sum(word_widths) + max(0, len(words) - 1) * space_w
+            parsed_lines.append((words, word_widths, lw, lh))
+            total_h += lh + line_spacing
+        total_h -= line_spacing
+
+        start_y = max(20, (canvas_h - total_h) // 2)
+        curr_y = start_y
+
+        for l_idx, (words, word_widths, lw, lh) in enumerate(parsed_lines):
+            cur_x = (canvas_w - lw) // 2
+            for w_idx, (w, ww) in enumerate(zip(words, word_widths)):
+                is_active = (l_idx == active_line_idx and w_idx == active_word_idx)
+                fill_color = highlight_col if is_active else base_text_col
+                current_stroke_w = (stroke_w + 2) if is_active else stroke_w
+
+                # Drop shadow
+                draw.text(
+                    (cur_x + 6, curr_y + 6),
+                    w,
+                    font=font,
+                    fill=(0, 0, 0, 200),
+                    stroke_width=current_stroke_w,
+                    stroke_fill=(0, 0, 0, 255)
+                )
+                # Main stroked text
+                draw.text(
+                    (cur_x, curr_y),
+                    w,
+                    font=font,
+                    fill=fill_color,
+                    stroke_width=current_stroke_w,
+                    stroke_fill=stroke_col
+                )
+                cur_x += ww + space_w
+            curr_y += lh + line_spacing
+
+        return img
 
     def _render_caption_image(self, lines: List[str]) -> Image.Image:
         """
@@ -244,28 +378,47 @@ class VideoCompositor:
             
             image_path = beat_images[i] if i < len(beat_images) else beat_images[0]
             
-            # A. Image Card
-            card_pil = self._create_bordered_card(image_path)
+            # A. Image Card (Permanent image + Flickering attention border)
+            card_pil, border_pil = self._create_image_card_layers(image_path)
             cw, ch = card_pil.size
             card_pos = ("center", card_center_y - ch // 2)
+            
+            # Permanent image clip (does not flicker)
             card_clip = self._pil_to_clip(card_pil, beat_dur, beat_start, card_pos, flash=False)
             clips_to_composite.append(card_clip)
+            
+            # Flickering glowing border clip (draws visual attention to the card)
+            border_clip = self._pil_to_clip(border_pil, beat_dur, beat_start, card_pos, flash=True)
+            clips_to_composite.append(border_clip)
 
-            # B. Flashing Pointing Arrows
-            arrows_pil = self._draw_pointing_arrows(cw, ch)
+            # B. Pointing Arrows (Permanent outline border + Flickering red fill)
+            arrow_border_pil, arrow_fill_pil = self._draw_pointing_arrow_layers(cw, ch)
             arrows_pos = ("center", card_center_y - ch // 2 - 50)
-            arrow_clip = self._pil_to_clip(arrows_pil, beat_dur, beat_start, arrows_pos, flash=True)
-            clips_to_composite.append(arrow_clip)
+            
+            # Flickering red fill clip (only red fill turns on/off)
+            arrow_fill_clip = self._pil_to_clip(arrow_fill_pil, beat_dur, beat_start, arrows_pos, flash=True)
+            clips_to_composite.append(arrow_fill_clip)
+            
+            # Permanent non-flickering arrow border clip
+            arrow_border_clip = self._pil_to_clip(arrow_border_pil, beat_dur, beat_start, arrows_pos, flash=False)
+            clips_to_composite.append(arrow_border_clip)
 
-        # 2. Verbatim Rapid-Fire Subtitles (1-3 words per cue, exact speech sync)
-        print(f"[compositor] Rendering {len(voice_result.caption_cues)} verbatim caption overlays...", flush=True)
+        # 2. Speech-Synchronized Karaoke Subtitles (Full sentences/clauses with active word highlight)
+        print(f"[compositor] Rendering {len(voice_result.caption_cues)} speech-synchronized caption overlays...", flush=True)
         for cue in voice_result.caption_cues:
             cue_start = cue.start_seconds
             cue_end = cue.end_seconds
-            cue_dur = max(0.12, cue_end - cue_start)
+            cue_dur = max(0.08, cue_end - cue_start)
             
-            # Render the exact spoken words in bold high-contrast font
-            caption_pil = self._render_caption_image([cue.text])
+            if cue.lines:
+                caption_pil = self._render_karaoke_caption_image(
+                    lines=cue.lines,
+                    active_line_idx=cue.active_line_index,
+                    active_word_idx=cue.active_word_index
+                )
+            else:
+                caption_pil = self._render_caption_image([cue.text])
+
             caption_pos = ("center", caption_pos_y)
             caption_clip = self._pil_to_clip(caption_pil, cue_dur, cue_start, caption_pos, flash=False)
             clips_to_composite.append(caption_clip)

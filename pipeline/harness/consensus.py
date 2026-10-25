@@ -85,10 +85,17 @@ Perform semantic consensus clustering. Determine which facts met the >= 50% cons
                 options={"temperature": 0.2}  # Deterministic clustering
             )
             raw = response["message"]["content"].strip()
-            # Extract JSON cleanly
+            
+            # Robust JSON parsing with bounds checking and trailing comma cleanup
+            import re
             first_b = raw.find("{")
             last_b = raw.rfind("}")
-            parsed = json.loads(raw[first_b : last_b + 1])
+            if first_b != -1 and last_b != -1 and last_b > first_b:
+                json_str = raw[first_b : last_b + 1]
+                json_str = re.sub(r',\s*([\]}])', r'\1', json_str)
+                parsed = json.loads(json_str)
+            else:
+                raise ValueError(f"No valid JSON object found in response: {raw[:100]}")
 
             for item in parsed.get("facts", []):
                 stmt = item.get("statement", "").strip()

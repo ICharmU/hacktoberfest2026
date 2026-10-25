@@ -42,12 +42,15 @@ def load_caption_style(preset_name: str = "brainrot_viral") -> dict:
             return data.get("presets", {}).get(preset_name, {})
     return {
         "font_size": 76,
-        "text_color": "#FFFF00",
+        "text_color": "#FFFFFF",
+        "highlight_color": "#FFFF00",
         "stroke_color": "#000000",
         "stroke_width": 8,
         "shadow_color": "#000000",
         "shadow_offset": [6, 6],
         "max_width_ratio": 0.85,
         "all_caps": True,
-        "box_padding": 20
+        "box_padding": 20,
+        "split_comma_threshold": 6,
+        "max_words_per_line": 4
     }

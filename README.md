@@ -15,7 +15,15 @@ An automated short-form video generation pipeline designed to create high-retent
 
 ## Quickstart
 
-### 1. Generate Video
+### 1. Launch Web UI Studio (React + FastAPI)
+Run the built-in web studio for a clean, visual console with real-time video progress, publication review, searchable output browsing, and Langfuse diagnostics:
+
+```bash
+pixi run ui-server
+```
+Then open [http://localhost:8000](http://localhost:8000) in your browser.
+
+### 2. CLI Generation
 ```bash
 # Default run
 pixi run generate

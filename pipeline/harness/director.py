@@ -43,7 +43,13 @@ NARRATIVE FORMULA & CONSTRAINTS:
      * "And that is why you should always..."
      * "Never..."
      * "Always..."
-7. FORMAT: Respond ONLY with valid JSON.
+7. IMAGE SPECIFICITY & GROUNDING (STRICT REQUIREMENT):
+   - Every beat's `image_search_query` MUST be a concrete, ultra-specific search query naming the EXACT primary tangible entity, named historical figure, specific artifact, document, machine, building, or real-world location explicitly mentioned in that beat's spoken words.
+   - FORBIDDEN SLOP: NEVER use abstract emotional or generic words such as 'chaos', 'mystery', 'shock', 'wild', 'reaction', 'dramatic', 'explosion', 'screaming', 'secret', 'insane', 'thinking'.
+   - For historical figures or events, include specific qualifiers like 'portrait', 'photo', 'archive', 'painting', or the exact year/location (e.g., 'King George II portrait' instead of 'king shock', 'Charge of the Light Brigade 1854' instead of 'battle chaos').
+   - For takeaway/resolution beats, anchor the query to the primary historical subject/artifact of the story, NOT a generic meme or reaction face.
+   - The viewer must immediately recognize the exact entity being talked about without needing to guess or make mental leaps.
+8. FORMAT: Respond ONLY with valid JSON.
 """
 
 DIRECTOR_USER_TEMPLATE = """Topic: {topic}
@@ -58,13 +64,15 @@ Discarded Temperature Noise (Do not use unless needed for context):
 {archetypes_prompt}
 
 Direct the script. Select the best archetype, construct the 3s hook, 3-beat outline, and elongated script with commentary/fluff.
+CRITICAL: Every `image_search_query` MUST be an ultra-specific, concrete name of the exact physical person, object, document, or place spoken in that beat. Absolutely NO abstract slop words ('shock', 'chaos', 'mystery', 'wild').
+
 Output JSON format:
 {{
   "selected_archetype": "id_of_archetype",
   "archetype_justification": "Why this archetype fits best",
   "hook": {{
     "verbal_hook": "3-second opening line",
-    "visual_anchor_query": "2-4 word visual search term"
+    "visual_anchor_query": "Concrete 2-4 word query of the primary person, object, or event"
   }},
   "outline": {{
     "beat_1_hook": "...",
@@ -75,7 +83,7 @@ Output JSON format:
     {{
       "text": "High energy narration line with commentary...",
       "caption_lines": ["LINE ONE", "LINE TWO"],
-      "image_search_query": "2-4 word visual query"
+      "image_search_query": "Concrete specific entity/person/object query directly mentioned in this beat"
     }}
   ],
   "title": "Viral YouTube Shorts Title",
@@ -116,19 +124,15 @@ class LeadDirectorAgent:
             )
             raw = response["message"]["content"].strip()
 
-            # Clean JSON from code fences
-            clean_json = raw
-            if "```" in clean_json:
-                first_b = clean_json.find("{")
-                last_b = clean_json.rfind("}")
-                if first_b != -1 and last_b != -1:
-                    clean_json = clean_json[first_b : last_b + 1]
-            try:
-                parsed = json.loads(clean_json)
-            except Exception:
-                first_b = raw.find("{")
-                last_b = raw.rfind("}")
-                parsed = json.loads(raw[first_b : last_b + 1])
+            import re
+            first_b = raw.find("{")
+            last_b = raw.rfind("}")
+            if first_b != -1 and last_b != -1 and last_b > first_b:
+                json_str = raw[first_b : last_b + 1]
+                json_str = re.sub(r',\s*([\]}])', r'\1', json_str)
+                parsed = json.loads(json_str)
+            else:
+                raise ValueError(f"No valid JSON object found in director response: {raw[:100]}")
 
             # Parse beats
             raw_beats = parsed.get("beats", [])
@@ -193,27 +197,45 @@ class LeadDirectorAgent:
             return self._generate_fallback(consensus)
 
     def _generate_fallback(self, consensus: ConsensusResult) -> HarnessOutput:
-        fact_str = consensus.consensus_facts[0].statement if consensus.consensus_facts else f"Something unbelievable happened with {consensus.topic}."
-        b1 = f"Stop scrolling right now, because what you think you know about {consensus.topic} is literally backwards."
-        b2 = f"Here is the insane part: {fact_str}. You cannot make this up—people were completely blindsided by how absurd this got."
-        b3 = f"And that is why you should always double check the facts before assuming anything about {consensus.topic}!"
-        
+        facts = [cf.statement for cf in consensus.consensus_facts]
+        f1 = facts[0] if len(facts) > 0 else f"Something completely chaotic happened with {consensus.topic}."
+        f2 = facts[1] if len(facts) > 1 else "The actual events spiraled even further beyond belief."
+        f3 = facts[2] if len(facts) > 2 else "It ended in pure unadulterated madness."
+
+        b1_text = f"Stop scrolling right now, because what you think you know about {consensus.topic} is literally backwards."
+        b2_text = f"Here is the insane part: {f1} You cannot make this up—people were completely blindsided by how absurd this got."
+        b3_text = f"And if you thought that was unbelievable, it gets ten times worse. {f2} Nobody could have predicted how fast things would escalate."
+        b4_text = f"To make matters completely unhinged: {f3} It was not just an ordinary competition—it was pure psychological warfare."
+        b5_text = f"And that is why you should always double check the facts before assuming anything about {consensus.topic}!"
+
+        # Concrete queries grounded in topic and facts
+        q1 = f"{consensus.topic} archival photo"
+        q2 = f"{consensus.topic} historical document"
+        q3 = f"{consensus.topic} historical event"
+        q4 = f"{consensus.topic} archive"
+        q5 = f"{consensus.topic} history"
+
         beats = [
-            ScriptBeat(text=b1, caption_lines=["STOP SCROLLING", "THINK YOU KNOW", "TOTALLY BACKWARDS"], image_search_query=f"{consensus.topic} mystery"),
-            ScriptBeat(text=b2, caption_lines=["THE INSANE PART", "BLINDSIDED", "CANNOT MAKE THIS UP"], image_search_query=f"{consensus.topic} shock"),
-            ScriptBeat(text=b3, caption_lines=["AND THAT IS WHY", "ALWAYS DOUBLE CHECK", "THE FACTS!"], image_search_query=f"{consensus.topic} conclusion")
+            ScriptBeat(text=b1_text, caption_lines=["STOP SCROLLING", "THINK YOU KNOW", "TOTALLY BACKWARDS"], image_search_query=q1),
+            ScriptBeat(text=b2_text, caption_lines=["THE INSANE PART", "BLINDSIDED", "CANNOT MAKE THIS UP"], image_search_query=q2),
+            ScriptBeat(text=b3_text, caption_lines=["TEN TIMES WORSE", "NOBODY PREDICTED", "FAST ESCALATION"], image_search_query=q3),
+            ScriptBeat(text=b4_text, caption_lines=["COMPLETELY UNHINGED", "NOT ORDINARY", "PSYCHOLOGICAL WARFARE"], image_search_query=q4),
+            ScriptBeat(text=b5_text, caption_lines=["AND THAT IS WHY", "ALWAYS DOUBLE CHECK", "THE FACTS!"], image_search_query=q5)
         ]
+        full_script = " ".join([b.text for b in beats])
+        word_count = len(full_script.split())
+
         return HarnessOutput(
             topic=consensus.topic,
             selected_archetype="counter_intuitive_inversion",
-            archetype_justification="Fallback archetype",
-            hook=IdeaHook(verbal_hook=b1, visual_anchor_query=f"{consensus.topic} mystery"),
-            outline=ThreeBeatOutline(beat_1_hook=b1, beat_2_tension=b2, beat_3_resolution=b3),
+            archetype_justification="Fallback narrative with 5 elongated beats guaranteeing duration >= 30s.",
+            hook=IdeaHook(verbal_hook=b1_text, visual_anchor_query=q1),
+            outline=ThreeBeatOutline(beat_1_hook=b1_text, beat_2_tension=f"{b2_text} {b3_text} {b4_text}", beat_3_resolution=b5_text),
             consensus_facts=[cf.statement for cf in consensus.consensus_facts],
             beats=beats,
-            full_script=f"{b1} {b2} {b3}",
+            full_script=full_script,
             title=f"The UNBELIEVABLE Secret of {consensus.topic}!",
             description=f"Shocking facts about {consensus.topic}!\n\n#shorts #viral",
             tags=["shorts", "viral", "facts"],
-            metadata={"word_count": len(f"{b1} {b2} {b3}".split())}
+            metadata={"word_count": word_count}
         )

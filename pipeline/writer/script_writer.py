@@ -17,7 +17,7 @@ class ScriptBeat(BaseModel):
         default_factory=list,
         description="List of caption lines for screen overlay. Each line must be a separate string, avoiding raw escaped characters"
     )
-    image_search_query: str = Field(description="2-4 word concrete keyword query for finding a web image")
+    image_search_query: str = Field(description="Concrete search query naming the exact primary entity, person, or physical object spoken in this beat. No generic emotion or slop words.")
 
 class ScriptResult(BaseModel):
     title: str = Field(description="Viral YouTube Shorts title")
@@ -47,7 +47,12 @@ NARRATIVE ARCHITECTURE & COHESION RULES:
    - "Never..."
    - "Always..."
 6. PACING: 3 to 4 beats total. Relentless, dramatic, and overstimulating.
-7. FORMAT: Respond ONLY with valid JSON.
+7. IMAGE SPECIFICITY & GROUNDING (STRICT REQUIREMENT):
+   - Every beat's 'image_search_query' MUST be a concrete, ultra-specific search query naming the EXACT primary tangible entity, named person, artifact, document, or place explicitly spoken in that beat's text.
+   - FORBIDDEN SLOP: NEVER use abstract emotional or generic words such as 'chaos', 'mystery', 'shock', 'wild', 'reaction', 'dramatic', 'explosion', 'screaming', 'secret', 'insane', 'face'.
+   - Include specific qualifiers like 'portrait', 'photo', 'archive', 'painting', or the exact year/event name (e.g., 'King George II portrait' instead of 'king shock').
+   - For takeaway beats, anchor to the primary historical subject/artifact of the video, NOT a generic meme or reaction face.
+8. FORMAT: Respond ONLY with valid JSON.
 """
 
 USER_PROMPT_TEMPLATE = """Research Topic / Date: {topic}
@@ -59,6 +64,7 @@ Create a single cohesive, escalating narrative story based on these facts.
 - Beat 1 introduces the overall topic ({topic}) and Fact #1 with full context.
 - Subsequent beats MUST transition SMOOTHLY by directly comparing to the previous fact.
 - Final beat MUST end with a dramatic takeaway starting with 'This is why...', 'And that is why...', 'Never...', or 'Always...'.
+- CRITICAL: Every `image_search_query` MUST be an ultra-specific, concrete name of the exact physical person, object, document, or place spoken in that beat. Absolutely NO abstract slop words ('shock', 'chaos', 'mystery', 'wild').
 
 Output JSON format:
 {{
@@ -69,7 +75,7 @@ Output JSON format:
     {{
       "text": "...",
       "caption_lines": ["LINE ONE", "LINE TWO"],
-      "image_search_query": "2-4 word visual query"
+      "image_search_query": "Concrete specific entity/person/object query directly mentioned in this beat"
     }}
   ]
 }}
@@ -169,7 +175,7 @@ class ScriptWriter:
                     ScriptBeat(
                         text=sample_beat_2,
                         caption_lines=["AND THAT IS WHY", "NEVER CLOSE", "YOUR EYES!"],
-                        image_search_query="shocked screaming face"
+                        image_search_query=f"{research.topic} archival photo"
                     )
                 ],
                 full_script=f"{sample_beat_1} {sample_beat_2}"

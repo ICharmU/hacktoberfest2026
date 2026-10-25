@@ -23,7 +23,10 @@ langfuse = ">=5.0.4, <6"
 python-dotenv = ">=1.2.4, <2"
 trafilatura = ">=2.3.1, <3"
 lxml-html-clean = ">=0.4.5, <0.5"
+fastapi = ">=0.110.0"
+uvicorn = ">=0.28.0"
 
 [tasks]
 generate = "python -m pipeline.main"
 download-assets = "python -m assets.download_assets"
+ui-server = "python -m web.backend.app"
