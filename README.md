@@ -23,7 +23,35 @@ pixi run ui-server
 ```
 Then open [http://localhost:8000](http://localhost:8000) in your browser.
 
-### 2. CLI Generation
+### 2. Run in Docker Container (Production)
+You can build and run the entire application (React UI + FastAPI + Pixi prefix + FFmpeg) in a self-contained Docker container:
+
+#### Option A: Docker Compose (Recommended)
+This automatically builds the container, imports your `.env` variables, and mounts `./outputs` to persist videos on your host machine:
+
+```bash
+docker compose up --build
+```
+Then open [http://localhost:8000](http://localhost:8000).
+
+#### Option B: Docker CLI
+```bash
+# 1. Build the Docker image (uses multi-stage build and Pixi prefix)
+docker build -t brainrot-studio .
+
+# 2. Run the container importing .env variables and mounting outputs
+docker run -d \
+  --name brainrot-studio \
+  --env-file .env \
+  -p 8000:8000 \
+  -v "${PWD}/outputs:/app/outputs" \
+  --add-host host.docker.internal:host-gateway \
+  brainrot-studio
+```
+
+*Tip: When running in Docker, if Ollama is running on your host machine, set `OLLAMA_HOST="http://host.docker.internal:11434"` in your `.env`.*
+
+### 3. CLI Generation
 ```bash
 # Default run
 pixi run generate

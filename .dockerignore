@@ -1,0 +1,33 @@
+# Version control
+.git
+.gitignore
+.github
+
+# Environment and secrets (import via docker run --env-file or compose)
+.env
+.env.*
+!.env.example
+web/.env
+
+# Local Pixi environments (host-specific binaries)
+.pixi
+
+# Node / Frontend build artifacts
+node_modules
+web/frontend/node_modules
+web/frontend/dist
+
+# Generated outputs
+outputs/*
+!outputs/.gitkeep
+
+# Python cache & test artifacts
+__pycache__
+*.py[cod]
+*$py.class
+.pytest_cache
+tests
+
+# OS specific files
+.DS_Store
+Thumbs.db

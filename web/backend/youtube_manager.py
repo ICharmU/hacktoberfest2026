@@ -13,7 +13,13 @@ from google_auth_oauthlib.flow import Flow
 import googleapiclient.discovery
 from googleapiclient.http import MediaFileUpload
 
+from dotenv import load_dotenv
+
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+for env_candidate in [ROOT_DIR / ".env", ROOT_DIR / "web" / ".env", Path.cwd() / ".env"]:
+    if env_candidate.exists():
+        load_dotenv(dotenv_path=env_candidate, override=True)
+
 CREDENTIALS_FILE = ROOT_DIR / ".youtube_credentials.json"
 CLIENT_SECRETS_FILE = ROOT_DIR / "client_secrets.json"
 
@@ -22,13 +28,39 @@ SCOPES = [
     "https://www.googleapis.com/auth/youtube.readonly"
 ]
 
+PKCE_CACHE_FILE = ROOT_DIR / ".oauth_pkce.json"
+
 class YouTubeManager:
+    _pending_redirect_uri: Optional[str] = None
+    _pending_code_verifier: Optional[str] = None
+
+    @classmethod
+    def get_pending_redirect_uri(cls) -> Optional[str]:
+        return cls._pending_redirect_uri
+
+    @classmethod
+    def get_pending_code_verifier(cls) -> Optional[str]:
+        if cls._pending_code_verifier:
+            return cls._pending_code_verifier
+        if PKCE_CACHE_FILE.exists():
+            try:
+                with open(PKCE_CACHE_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    return data.get("code_verifier")
+            except Exception:
+                pass
+        return None
+
     @staticmethod
     def get_client_config() -> Optional[Dict[str, Any]]:
         """
         Retrieves client configuration from environment variables or client_secrets.json.
         """
-        # 1. Environment variables
+        # Ensure latest env vars
+        for env_candidate in [ROOT_DIR / ".env", ROOT_DIR / "web" / ".env", Path.cwd() / ".env"]:
+            if env_candidate.exists():
+                load_dotenv(dotenv_path=env_candidate, override=True)
+
         client_id = os.getenv("YOUTUBE_CLIENT_ID")
         client_secret = os.getenv("YOUTUBE_CLIENT_SECRET")
         if client_id and client_secret:
@@ -60,6 +92,7 @@ class YouTubeManager:
         if not config:
             raise ValueError("YouTube OAuth not configured. Provide YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET in Settings or provide client_secrets.json.")
 
+        cls._pending_redirect_uri = redirect_uri
         flow = Flow.from_client_config(
             config,
             scopes=SCOPES,
@@ -68,8 +101,21 @@ class YouTubeManager:
         auth_url, state = flow.authorization_url(
             access_type="offline",
             include_granted_scopes="true",
-            prompt="consent"
+            prompt="consent",
+            state=redirect_uri
         )
+        cls._pending_code_verifier = flow.code_verifier
+
+        # Cache PKCE verifier to survive potential server reloads
+        try:
+            with open(PKCE_CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump({
+                    "redirect_uri": redirect_uri,
+                    "code_verifier": flow.code_verifier
+                }, f)
+        except Exception:
+            pass
+
         return {
             "auth_url": auth_url,
             "state": state
@@ -84,12 +130,21 @@ class YouTubeManager:
         if not config:
             raise ValueError("YouTube OAuth configuration missing.")
 
+        code_verifier = cls.get_pending_code_verifier()
+
         flow = Flow.from_client_config(
             config,
             scopes=SCOPES,
             redirect_uri=redirect_uri
         )
-        flow.fetch_token(code=code)
+        if code_verifier:
+            flow.code_verifier = code_verifier
+
+        fetch_kwargs = {"code": code}
+        if code_verifier:
+            fetch_kwargs["code_verifier"] = code_verifier
+
+        flow.fetch_token(**fetch_kwargs)
         credentials = flow.credentials
 
         creds_data = {
@@ -103,6 +158,13 @@ class YouTubeManager:
 
         with open(CREDENTIALS_FILE, "w", encoding="utf-8") as f:
             json.dump(creds_data, f, indent=2)
+
+        # Cleanup temporary PKCE file
+        if PKCE_CACHE_FILE.exists():
+            try:
+                PKCE_CACHE_FILE.unlink()
+            except Exception:
+                pass
 
         return cls.get_channel_status()
 

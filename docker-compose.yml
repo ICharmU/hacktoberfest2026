@@ -1,0 +1,23 @@
+services:
+  brainrot-studio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: brainrot-studio:latest
+    container_name: brainrot_studio_app
+    ports:
+      - "8000:8000"
+    # Automatically import all environment variables from .env
+    env_file:
+      - .env
+    environment:
+      - PORT=8000
+    volumes:
+      # Persist generated videos to host machine
+      - ./outputs:/app/outputs
+      # Allow mounting custom background gameplay videos
+      - ./assets/gameplay:/app/assets/gameplay
+    extra_hosts:
+      # Enables container to connect to Ollama running on host OS (host.docker.internal)
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

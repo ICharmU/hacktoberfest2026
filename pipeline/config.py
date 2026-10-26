@@ -2,6 +2,7 @@
 Central configuration for the Video Generation Pipeline.
 """
 
+import os
 from pathlib import Path
 import json
 
@@ -22,7 +23,7 @@ VIDEO_HEIGHT = 1920
 VIDEO_FPS = 30
 
 # Ollama model configuration
-OLLAMA_HOST = "http://localhost:11434"
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 DEFAULT_MODEL = "gemma4:12b"
 
 # Voice configuration (edge-tts)

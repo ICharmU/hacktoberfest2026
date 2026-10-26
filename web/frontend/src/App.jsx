@@ -53,6 +53,11 @@ export default function App() {
     if (window.location.search.includes('youtube_connected=true')) {
       loadYouTubeStatus();
       window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (window.location.search.includes('youtube_error=')) {
+      const params = new URLSearchParams(window.location.search);
+      const errMsg = params.get('youtube_error');
+      console.error('YouTube OAuth failed:', errMsg);
+      window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
 

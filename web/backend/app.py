@@ -512,17 +512,24 @@ async def get_youtube_auth_url(redirect_uri: Optional[str] = None):
 
 @app.get("/api/youtube/auth/callback")
 async def youtube_auth_callback(code: str, state: Optional[str] = None, request: Request = None):
-    host_header = request.headers.get("host", "localhost:8000") if request else "localhost:8000"
-    redirect_uri = f"http://{host_header}/api/youtube/auth/callback"
+    # Resolve the exact redirect URI used to start the OAuth request
+    target_redirect_uri = None
+    if state and state.startswith("http"):
+        target_redirect_uri = state
+    elif YouTubeManager.get_pending_redirect_uri():
+        target_redirect_uri = YouTubeManager.get_pending_redirect_uri()
+    else:
+        host_header = request.headers.get("host", "localhost:8000") if request else "localhost:8000"
+        target_redirect_uri = f"http://{host_header}/api/youtube/auth/callback"
+
+    print(f"[youtube] Callback received! Exchanging code with redirect_uri: {target_redirect_uri}", flush=True)
     try:
-        YouTubeManager.exchange_code(code=code, redirect_uri=redirect_uri)
+        YouTubeManager.exchange_code(code=code, redirect_uri=target_redirect_uri)
+        print("[youtube] OAuth credentials successfully exchanged and saved!", flush=True)
         return RedirectResponse(url="/?youtube_connected=true")
     except Exception as e:
-        try:
-            YouTubeManager.exchange_code(code=code, redirect_uri="http://localhost:8000/api/youtube/auth/callback")
-            return RedirectResponse(url="/?youtube_connected=true")
-        except Exception as inner_e:
-            return RedirectResponse(url=f"/?youtube_error={str(inner_e)}")
+        print(f"[youtube] Code exchange failed with {target_redirect_uri}: {e}", flush=True)
+        return RedirectResponse(url=f"/?youtube_error={str(e)}")
 
 
 @app.post("/api/youtube/disconnect")
@@ -587,8 +594,18 @@ if FRONTEND_DIST.exists():
 def main():
     import uvicorn
     port = int(os.getenv("PORT", "8000"))
+    reload_opt = os.getenv("UVICORN_RELOAD", "false").lower() == "true"
     print(f"Starting Brainrot Web Studio on http://localhost:{port}")
-    uvicorn.run("web.backend.app:app", host="0.0.0.0", port=port, reload=True)
+    if reload_opt:
+        uvicorn.run(
+            "web.backend.app:app",
+            host="0.0.0.0",
+            port=port,
+            reload=True,
+            reload_dirs=[str(ROOT_DIR / "web" / "backend")]
+        )
+    else:
+        uvicorn.run("web.backend.app:app", host="0.0.0.0", port=port, reload=False)
 
 
 if __name__ == "__main__":
